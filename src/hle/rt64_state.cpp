@@ -129,6 +129,7 @@ namespace RT64 {
         drawCall.rdpParams.envColor = { 0.0f, 0.0f, 0.0f, 0.0f };
         drawCall.rdpParams.fogColor = { 0.0f, 0.0f, 0.0f, 0.0f };
         drawCall.rdpParams.blendColor = { 0.0f, 0.0f, 0.0f, 0.0f };
+        drawCall.rdpParams.nativeGrayscale = { 0.0f, 0.0f, 0.0f, 0.0f };
         drawCall.cullBothMask = 0;
         drawCall.shadingSmoothMask = 0;
         drawCall.NoN = false;
@@ -155,6 +156,7 @@ namespace RT64 {
     }
 
     void State::loadDrawState() {
+        drawCall.rdpParams.nativeGrayscale = nativeGrayscaleEnabled ? nativeGrayscaleColor : hlslpp::float4(0.0f);
         const bool gpuCopiesEnabled = ext.emulatorConfig->framebuffer.copyWithGPU;
         bool textureCheck = false;
         if (drawStatus.isChanged(DrawAttribute::Combine)) {
@@ -362,7 +364,31 @@ namespace RT64 {
                     checkResult = framebufferManager.checkRegionsTMEM(checkTMEMStart, checkTMEMEnd, dstCallTile.lineWidth, tile.siz, tile.fmt, tile.uls, usesTLUT, tile.palette);
                     dstCallTile.syncRequired = checkResult.syncRequired;
 
-                    if (gpuCopiesEnabled && checkResult.valid()) {
+                    // Framebuffer-backed native textures must go through uploadTexture so
+                    // their full-resolution source (and any requested crop) is uploaded.
+                    // A TMEM tile copy only contains the logical-resolution preview.
+                    const LoadOperation *lastTileLoad = nullptr;
+                    if (tile.tmem < RDP_TMEM_WORDS) {
+                        for (auto loadOp = workload.drawData.loadOperations.rbegin();
+                             loadOp != workload.drawData.loadOperations.rend(); ++loadOp) {
+                            if (loadOp->type != LoadOperation::Type::TLUT && loadOp->tile.tmem == tile.tmem) {
+                                lastTileLoad = &*loadOp;
+                                break;
+                            }
+                        }
+                        if (lastTileLoad == nullptr) {
+                            lastTileLoad = &rdp->rice.lastLoadOpByTMEM[tile.tmem];
+                        }
+                    }
+                    const bool nativeTextureLoad = lastTileLoad != nullptr &&
+                        rdp->findNativeTexture(lastTileLoad->texture.address) != nullptr;
+                    // Whole-image PC loads can exceed TMEM. Their native image is
+                    // uploaded directly, so the TMEM overflow fallback would only
+                    // sample the zero-filled compatibility backing allocation.
+                    if (nativeTextureLoad) {
+                        dstCallTile.rawTMEM = false;
+                    }
+                    if (gpuCopiesEnabled && checkResult.valid() && !nativeTextureLoad) {
                         dstCallTile.tileCopyUsed = true;
                         dstCallTile.tmemHashOrID = checkResult.tileId;
                         dstCallTile.tileCopyWidth = checkResult.tileWidth;

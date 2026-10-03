@@ -21,5 +21,7 @@ namespace RT64 {
         uint64_t memorySize = 0;
         std::vector<uint8_t> bytesTMEM;
         bool decodeTMEM = false;
+        bool nativeHighRes = false;
+        interop::float2 nativeScale = { 1.0f, 1.0f };
     };
 };

@@ -3,6 +3,15 @@ project(rt64 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
+# Rebuild embedded shader blobs when shared HLSL includes or CPU-side shader
+# parameter declarations change. These files are included indirectly by many
+# shaders, so listing them on every shader command keeps incremental builds
+# correct when the shared layout changes.
+file(GLOB_RECURSE RT64_SHADER_SHARED_DEPENDENCIES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/shaders/*.hlsli"
+    "${PROJECT_SOURCE_DIR}/src/shared/*.h"
+)
+
 if (APPLE)
     enable_language(OBJC OBJCXX)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15")
@@ -22,16 +31,16 @@ function(preprocess INFILE OUTFILE OPTIONS)
         if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             add_custom_command(OUTPUT ${OUTFILE}
                 COMMAND clang -x c -E -P ${INFILE} -o ${OUTFILE} ${OPTIONS}
-                DEPENDS ${INFILE})
+                DEPENDS ${INFILE} ${RT64_SHADER_SHARED_DEPENDENCIES})
         else()
             add_custom_command(OUTPUT ${OUTFILE}
                 COMMAND ${CMAKE_CXX_COMPILER} /Zs /EP ${INFILE} ${OPTIONS} > ${OUTFILE}
-                DEPENDS ${INFILE})
+                DEPENDS ${INFILE} ${RT64_SHADER_SHARED_DEPENDENCIES})
         endif()
     else()
         add_custom_command(OUTPUT ${OUTFILE}
             COMMAND ${CMAKE_CXX_COMPILER} -x c -E -P ${INFILE} -o ${OUTFILE} ${OPTIONS}
-            DEPENDS ${INFILE})
+            DEPENDS ${INFILE} ${RT64_SHADER_SHARED_DEPENDENCIES})
     endif()
 endfunction()
 
@@ -116,7 +125,7 @@ set (DXC_RT_OPTS "${DXC_COMMON_OPTS}" "-D" "RT_SHADER" "-T" "lib_6_3" "-fspv-tar
 function(build_shader_spirv_impl TARGETOBJ FILENAME TARGET_NAME OUTNAME)
     add_custom_command(OUTPUT ${OUTNAME}.spv
         COMMAND ${DXC} ${DXC_SPV_OPTS} ${ARGN} ${FILENAME} /Fo ${OUTNAME}.spv
-        DEPENDS ${FILENAME})
+        DEPENDS ${FILENAME} ${RT64_SHADER_SHARED_DEPENDENCIES})
     add_custom_command(OUTPUT ${OUTNAME}.spirv.c
         COMMAND file_to_c ${OUTNAME}.spv ${TARGET_NAME}BlobSPIRV ${OUTNAME}.spirv.c ${OUTNAME}.spirv.h
         DEPENDS ${OUTNAME}.spv file_to_c
@@ -556,4 +565,3 @@ build_pixel_shader(  rt64 "src/shaders/Im3DPS.hlsl")
 build_pixel_shader(  rt64 "src/shaders/PostProcessPS.hlsl")
 
 target_include_directories(rt64 PRIVATE ${CMAKE_BINARY_DIR}/src)
-

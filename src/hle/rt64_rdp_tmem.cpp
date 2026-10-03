@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cinttypes>
+#include <cstring>
 
 #include "xxHash/xxh3.h"
 
@@ -50,6 +51,75 @@ namespace RT64 {
     }
 
     uint64_t TextureManager::uploadTexture(State *state, const LoadTile &loadTile, TextureCache *textureCache, uint64_t creationFrame, uint16_t width, uint16_t height, uint32_t tlut) {
+        const LoadOperation &loadOperation = state->rdp->rice.lastLoadOpByTMEM[loadTile.tmem];
+        const NativeTexture *nativeTexture = state->rdp->findNativeTexture(loadOperation.texture.address);
+        if (nativeTexture != nullptr && (loadOperation.type == LoadOperation::Type::Tile ||
+                                         loadOperation.type == LoadOperation::Type::Block)) {
+            uint32_t sourceX = 0;
+            uint32_t sourceY = 0;
+            uint32_t logicalCropWidth = width;
+            uint32_t logicalCropHeight = height;
+            if (loadOperation.type == LoadOperation::Type::Tile) {
+                sourceX = loadOperation.tile.uls >> 2;
+                sourceY = loadOperation.tile.ult >> 2;
+                const uint32_t logicalRight = loadOperation.tile.lrs >> 2;
+                const uint32_t logicalBottom = loadOperation.tile.lrt >> 2;
+                if (logicalRight < sourceX || logicalBottom < sourceY) {
+                    sourceX = nativeTexture->nativeWidth;
+                }
+                else {
+                    logicalCropWidth = 1 + logicalRight - sourceX;
+                    logicalCropHeight = 1 + logicalBottom - sourceY;
+                }
+            }
+            else {
+                sourceX = loadOperation.tile.uls;
+                sourceY = loadOperation.tile.ult;
+            }
+
+            if (sourceX < nativeTexture->nativeWidth && sourceY < nativeTexture->nativeHeight) {
+                logicalCropWidth = std::min<uint32_t>(logicalCropWidth, width);
+                logicalCropHeight = std::min<uint32_t>(logicalCropHeight, height);
+                logicalCropWidth = std::min(logicalCropWidth, nativeTexture->nativeWidth - sourceX);
+                logicalCropHeight = std::min(logicalCropHeight, nativeTexture->nativeHeight - sourceY);
+
+                const uint32_t pixelX = uint32_t(uint64_t(sourceX) * nativeTexture->width / nativeTexture->nativeWidth);
+                const uint32_t pixelY = uint32_t(uint64_t(sourceY) * nativeTexture->height / nativeTexture->nativeHeight);
+                const uint32_t pixelRight = uint32_t(uint64_t(sourceX + logicalCropWidth) * nativeTexture->width / nativeTexture->nativeWidth);
+                const uint32_t pixelBottom = uint32_t(uint64_t(sourceY + logicalCropHeight) * nativeTexture->height / nativeTexture->nativeHeight);
+                const uint32_t pixelWidth = pixelRight > pixelX ? std::min(pixelRight - pixelX, nativeTexture->width - pixelX) : 0;
+                const uint32_t pixelHeight = pixelBottom > pixelY ? std::min(pixelBottom - pixelY, nativeTexture->height - pixelY) : 0;
+                const size_t requiredByteCount = size_t(nativeTexture->width) * nativeTexture->height * 4;
+                if (pixelWidth > 0 && pixelHeight > 0 && nativeTexture->byteCount >= requiredByteCount) {
+                    // Hash the actual crop contents as well as its shape. OTR resources may
+                    // update in place (or reuse an allocation) between frames.
+                    XXH3_state_t hashState;
+                    XXH3_64bits_reset(&hashState);
+                    XXH3_64bits_update(&hashState, &width, sizeof(width));
+                    XXH3_64bits_update(&hashState, &height, sizeof(height));
+                    XXH3_64bits_update(&hashState, &pixelWidth, sizeof(pixelWidth));
+                    XXH3_64bits_update(&hashState, &pixelHeight, sizeof(pixelHeight));
+                    for (uint32_t y = 0; y < pixelHeight; y++) {
+                        const uint8_t *source = nativeTexture->rgba + (size_t(pixelY + y) * nativeTexture->width + pixelX) * 4;
+                        XXH3_64bits_update(&hashState, source, size_t(pixelWidth) * 4);
+                    }
+                    const uint64_t hash = XXH3_64bits_digest(&hashState);
+                    if (hashSet.find(hash) == hashSet.end()) {
+                        hashSet.insert(hash);
+                        std::vector<uint8_t> croppedRGBA(size_t(pixelWidth) * pixelHeight * 4);
+                        for (uint32_t y = 0; y < pixelHeight; y++) {
+                            const uint8_t *source = nativeTexture->rgba + (size_t(pixelY + y) * nativeTexture->width + pixelX) * 4;
+                            uint8_t *destination = croppedRGBA.data() + size_t(y) * pixelWidth * 4;
+                            memcpy(destination, source, size_t(pixelWidth) * 4);
+                        }
+                        textureCache->queueGPUUploadRGBA32(hash, creationFrame, croppedRGBA.data(), croppedRGBA.size(),
+                                                           pixelWidth, pixelHeight, width, height);
+                    }
+                    return hash;
+                }
+            }
+        }
+
         const uint8_t *TMEM = reinterpret_cast<const uint8_t *>(state->rdp->TMEM);
         uint64_t hash = TMEMHasher::hash(TMEM, loadTile, width, height, tlut, TMEMHasher::CurrentHashVersion);
         if (hashSet.find(hash) == hashSet.end()) {

@@ -7,7 +7,9 @@
 #include "common/rt64_common.h"
 
 #include <array>
+#include <cstddef>
 #include <stdint.h>
+#include <unordered_map>
 
 #include "../include/rt64_extended_gbi.h"
 
@@ -36,6 +38,19 @@
 namespace RT64 {
     struct State;
     struct GBI;
+
+    // A full-resolution resource owned by the host application. The RDP uses
+    // the logical RDRAM address to associate it with subsequent TMEM loads,
+    // while the RGBA payload remains outside emulated RDRAM.
+    struct NativeTexture {
+        uint32_t address = 0;
+        const uint8_t *rgba = nullptr;
+        size_t byteCount = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t nativeWidth = 0;
+        uint32_t nativeHeight = 0;
+    };
 
     enum class RDPTriangle {
         Base = G_RDPTRI_BASE,
@@ -104,6 +119,8 @@ namespace RT64 {
             LoadOperation lastLoadOpByTMEM[RDP_TMEM_WORDS] = {};
         } rice;
 
+        std::unordered_map<uint32_t, NativeTexture> nativeTextures;
+
         GBI *gbi;
         std::array<uint8_t, 256> commandWordLengths;
         State *state;
@@ -152,6 +169,9 @@ namespace RT64 {
         void setColorImage(uint8_t fmt, uint8_t siz, uint16_t width, uint32_t address);
         void setDepthImage(uint32_t address);
         void setTextureImage(uint8_t fmt, uint8_t siz, uint16_t width, uint32_t address);
+        void clearNativeTextures();
+        void registerNativeTexture(const NativeTexture &nativeTexture);
+        const NativeTexture *findNativeTexture(uint32_t address) const;
         void setCombine(uint64_t combine);
         void pushCombine();
         void popCombine();

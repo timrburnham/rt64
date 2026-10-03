@@ -292,6 +292,26 @@ namespace RT64 {
 #   endif
     }
 
+    void RDP::clearNativeTextures() {
+        nativeTextures.clear();
+    }
+
+    void RDP::registerNativeTexture(const NativeTexture &nativeTexture) {
+        if (nativeTexture.rgba == nullptr || nativeTexture.byteCount == 0 || nativeTexture.width == 0 ||
+            nativeTexture.height == 0 || nativeTexture.nativeWidth == 0 || nativeTexture.nativeHeight == 0) {
+            return;
+        }
+
+        NativeTexture registered = nativeTexture;
+        registered.address = maskAddress(nativeTexture.address);
+        nativeTextures[registered.address] = registered;
+    }
+
+    const NativeTexture *RDP::findNativeTexture(uint32_t address) const {
+        const auto it = nativeTextures.find(address & RDP_ADDRESS_MASK);
+        return (it != nativeTextures.end()) ? &it->second : nullptr;
+    }
+
     void RDP::setCombine(uint64_t combine) {
         interop::uint combineL = combine & 0xFFFFFFFFULL;
         interop::uint combineH = (combine >> 32ULL) & 0xFFFFFFFFULL;

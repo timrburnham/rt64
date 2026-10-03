@@ -18,10 +18,19 @@ void CSMain(uint2 coord : SV_DispatchThreadID) {
     if ((coord.x < gConstants.resolution.x) && (coord.y < gConstants.resolution.y)) {
         uint2 offsetCoord = gConstants.offset + coord;
         uint dstIndex = offsetCoord.y * gConstants.resolution.x + offsetCoord.x;
+        uint sourceWidth, sourceHeight;
 #   ifdef MULTISAMPLING
-        float inputDepth = gInput.Load(offsetCoord, 0);
+        uint sourceSamples;
+        gInput.GetDimensions(sourceWidth, sourceHeight, sourceSamples);
+#   else
+        gInput.GetDimensions(sourceWidth, sourceHeight);
+#   endif
+        uint2 sourceCoord = uint2((float2(offsetCoord) + 0.5f) * gConstants.sourceScale);
+        sourceCoord = min(sourceCoord, uint2(sourceWidth - 1, sourceHeight - 1));
+#   ifdef MULTISAMPLING
+        float inputDepth = gInput.Load(sourceCoord, 0);
 #else
-        float inputDepth = gInput.Load(uint3(offsetCoord, 0));
+        float inputDepth = gInput.Load(uint3(sourceCoord, 0));
 #   endif
         float z = clamp(inputDepth, 0.0f, 1.0f);
         float dz = 0.0f; // TODO

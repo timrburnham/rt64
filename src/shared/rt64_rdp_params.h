@@ -19,6 +19,8 @@ namespace interop {
         float3 keyCenter;
         float3 keyScale;
         int convertK[6];
+        // Native-port grayscale tint, with alpha zero when disabled.
+        float4 nativeGrayscale;
     };
 #ifdef HLSL_CPU
 };

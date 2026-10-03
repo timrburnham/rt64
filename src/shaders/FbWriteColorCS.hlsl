@@ -14,7 +14,11 @@ void CSMain(uint2 coord : SV_DispatchThreadID) {
     if ((coord.x < gConstants.resolution.x) && (coord.y < gConstants.resolution.y)) {
         uint2 offsetCoord = gConstants.offset + coord;
         uint dstIndex = offsetCoord.y * gConstants.resolution.x + offsetCoord.x;
-        float4 color = gInput.Load(uint3(offsetCoord, 0));
+        uint sourceWidth, sourceHeight;
+        gInput.GetDimensions(sourceWidth, sourceHeight);
+        uint2 sourceCoord = uint2((float2(offsetCoord) + 0.5f) * gConstants.sourceScale);
+        sourceCoord = min(sourceCoord, uint2(sourceWidth - 1, sourceHeight - 1));
+        float4 color = gInput.Load(uint3(sourceCoord, 0));
         bool oddColumn = (offsetCoord.x & 1);
         uint randomSeed = initRand(gConstants.ditherRandomSeed, dstIndex, 16);
         uint ditherValue = DitherPatternValue(gConstants.ditherPattern, offsetCoord, randomSeed);

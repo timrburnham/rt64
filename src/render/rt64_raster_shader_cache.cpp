@@ -16,12 +16,17 @@ namespace RT64 {
 
         this->shaderCache = shaderCache;
 
+        // Publish the running state before launching the worker, which can
+        // begin waiting on the queue as soon as the thread is created.
+        threadRunning.store(true, std::memory_order_release);
         thread = std::make_unique<std::thread>(&CompilationThread::loop, this);
-        threadRunning = false;
     }
 
     RasterShaderCache::CompilationThread::~CompilationThread() {
-        threadRunning = false;
+        {
+            std::unique_lock<std::mutex> queueLock(shaderCache->descQueueMutex);
+            threadRunning.store(false, std::memory_order_release);
+        }
         shaderCache->descQueueChanged.notify_all();
         thread->join();
         thread.reset(nullptr);
@@ -33,40 +38,44 @@ namespace RT64 {
         // The shader compilation thread should have idle priority by default as the application can use the ubershader in the meantime.
         Thread::setCurrentThreadPriority(Thread::Priority::Idle);
 
-        threadRunning = true;
-
-        while (threadRunning) {
+        while (true) {
             ShaderDescription shaderDesc;
-            bool fromPriorityQueue = false;
             
-            // Check the top of the queue or wait if it's empty.
+            // Wait until work is queued or shutdown is requested, then remove
+            // one item and account for it while holding the queue lock.
             {
                 std::unique_lock<std::mutex> queueLock(shaderCache->descQueueMutex);
-                shaderCache->descQueueActiveCount--;
                 shaderCache->descQueueChanged.wait(queueLock, [this]() {
-                    return !threadRunning || !shaderCache->descQueue.empty();
+                    return !threadRunning.load(std::memory_order_acquire) || !shaderCache->descQueue.empty();
                 });
 
-                shaderCache->descQueueActiveCount++;
-                if (!shaderCache->descQueue.empty()) {
-                    shaderDesc = shaderCache->descQueue.front();
-                    shaderCache->descQueue.pop();
-                    fromPriorityQueue = true;
+                if (!threadRunning.load(std::memory_order_acquire)) {
+                    return;
                 }
+
+                assert(!shaderCache->descQueue.empty());
+                shaderDesc = shaderCache->descQueue.front();
+                shaderCache->descQueue.pop();
+                shaderCache->activeCompileCount++;
             }
             
-            // Compile the shader at the top of the queue.
-            if (fromPriorityQueue) {
-                assert((shaderCache->shaderUber != nullptr) && "Ubershader should've been created by the time a new shader is submitted to the cache.");
-                const RenderPipelineLayout *uberPipelineLayout = shaderCache->shaderUber->pipelineLayout.get();
-                const RenderMultisampling multisampling = shaderCache->multisampling;
-                std::unique_ptr<RasterShader> newShader = std::make_unique<RasterShader>(shaderCache->device, shaderDesc, uberPipelineLayout, shaderCache->shaderFormat, multisampling, shaderCache->shaderCompiler.get(), &shaderCache->optimizerCacheSPIRV);
+            // Compile the shader and publish it before marking this job idle.
+            assert((shaderCache->shaderUber != nullptr) && "Ubershader should've been created by the time a new shader is submitted to the cache.");
+            const RenderPipelineLayout *uberPipelineLayout = shaderCache->shaderUber->pipelineLayout.get();
+            const RenderMultisampling multisampling = shaderCache->multisampling;
+            std::unique_ptr<RasterShader> newShader = std::make_unique<RasterShader>(shaderCache->device, shaderDesc, uberPipelineLayout, shaderCache->shaderFormat, multisampling, shaderCache->shaderCompiler.get(), &shaderCache->optimizerCacheSPIRV);
 
-                {
-                    const std::unique_lock<std::mutex> lock(shaderCache->GPUShadersMutex);
-                    shaderCache->GPUShaders[shaderDesc.hash()] = std::move(newShader);
-                }
+            {
+                const std::unique_lock<std::mutex> lock(shaderCache->GPUShadersMutex);
+                shaderCache->GPUShaders[shaderDesc.hash()] = std::move(newShader);
             }
+
+            {
+                std::unique_lock<std::mutex> queueLock(shaderCache->descQueueMutex);
+                assert(shaderCache->activeCompileCount > 0);
+                shaderCache->activeCompileCount--;
+            }
+            shaderCache->descQueueChanged.notify_all();
         }
     }
 
@@ -82,8 +91,6 @@ namespace RT64 {
 #   ifdef _WIN32
         shaderCompiler = std::make_unique<ShaderCompiler>();
 #   endif
-
-        descQueueActiveCount = threadCount;
 
         for (uint32_t t = 0; t < threadCount; t++) {
             compilationThreads.push_back(std::make_unique<CompilationThread>(this));
@@ -112,18 +119,17 @@ namespace RT64 {
     }
 
     void RasterShaderCache::submit(const ShaderDescription &desc) {
-        {
-            std::unique_lock<std::mutex> queueLock(submissionMutex);
+        // Keep the submission serialized until the descriptor is queued, so
+        // waitForAll() cannot pass an item between these two operations.
+        std::unique_lock<std::mutex> submissionLock(submissionMutex);
 
-            // Verify if an entry with the same hash was already submitted before.
-            const uint64_t shaderHash = desc.hash();
-            bool &found = shaderHashes[shaderHash];
-            if (found) {
-                return;
-            }
-
-            found = true;
+        // Verify if an entry with the same hash was already submitted before.
+        const uint64_t shaderHash = desc.hash();
+        bool &found = shaderHashes[shaderHash];
+        if (found) {
+            return;
         }
+        found = true;
 
         // Push a new shader compilation to the queue.
         {
@@ -135,16 +141,14 @@ namespace RT64 {
     }
     
     void RasterShaderCache::waitForAll() {
-        {
-            std::unique_lock<std::mutex> queueLock(descQueueMutex);
-            descQueue = std::queue<ShaderDescription>();
-        }
-
-        bool keepWaiting = false;
-        do {
-            std::unique_lock<std::mutex> queueLock(descQueueMutex);
-            keepWaiting = (descQueueActiveCount > 0);
-        } while (keepWaiting);
+        // Serialize with submit() so an item cannot be inserted between the
+        // queue clear and the idle predicate becoming true.
+        std::unique_lock<std::mutex> submissionLock(submissionMutex);
+        std::unique_lock<std::mutex> queueLock(descQueueMutex);
+        // Cache destruction invalidates queued-but-not-started work, matching
+        // the previous behavior. Jobs already removed by workers must finish.
+        descQueue = std::queue<ShaderDescription>();
+        descQueueChanged.wait(queueLock, [this]() { return activeCompileCount == 0; });
     }
 
     void RasterShaderCache::destroyAll() {

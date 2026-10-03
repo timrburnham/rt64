@@ -182,6 +182,9 @@ LIBRARY_EXPORT bool RasterPS(const RenderParams rp, float4 vertexPosition, float
     ccInputs.K4 = (instanceRDPParams[instanceIndex].convertK[4] / 255.0f);
     ccInputs.K5 = (instanceRDPParams[instanceIndex].convertK[5] / 255.0f);
     colorCombiner.run(ccInputs, combinerColor, alphaCompareValue);
+    const float4 nativeGrayscale = instanceRDPParams[instanceIndex].nativeGrayscale;
+    const float nativeIntensity = (combinerColor.r + combinerColor.g + combinerColor.b) / 3.0f;
+    combinerColor.rgb = lerp(combinerColor.rgb, nativeGrayscale.rgb * nativeIntensity, nativeGrayscale.a);
     
 #if 0
     // Alpha dither.

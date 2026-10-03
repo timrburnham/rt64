@@ -54,6 +54,8 @@ namespace RT64 {
         indices.fill(0);
         used.reset();
         lights.fill({});
+        nativePointLights.fill({});
+        nativePointLightingActive = false;
         segments.fill(0);
         viewportStack[0] = {};
         clipRatios[0] = 1;
@@ -562,6 +564,12 @@ namespace RT64 {
         const bool usesLighting = (geometryMode & G_LIGHTING);
         const bool usesPointLighting = curGBI->flags.pointLighting && (geometryMode & G_POINT_LIGHTING);
         if (usesLighting) {
+            // Native point and directional lights share bytes that are padding
+            // in the directional layout. Re-encode when the native geometry
+            // mode changes so those bytes are never mistaken for attenuation.
+            if (nativeLightLayout && (usesPointLighting != nativePointLightingActive)) {
+                lightsChanged = true;
+            }
             if (lightsChanged) {
                 auto &rspLights = workload.drawData.rspLights;
                 vertexLightIndex = static_cast<uint32_t>(rspLights.size());
@@ -583,16 +591,21 @@ namespace RT64 {
                         light.dir.colcb / 255.0f
                     };
 
-                    if (usesPointLighting && (light.pos.kc > 0)) {
+                    const bool nativePointLight = nativeLightLayout && (l < lightCount) &&
+                        (nativePointLights[l].kc > 0);
+                    const bool usePointLight = usesPointLighting &&
+                        (nativeLightLayout ? nativePointLight : (light.pos.kc > 0));
+                    if (usePointLight) {
+                        const PosLight &pointLight = nativeLightLayout ? nativePointLights[l] : light.pos;
                         rspLight.posDir = {
-                            static_cast<float>(light.pos.posx),
-                            static_cast<float>(light.pos.posy),
-                            static_cast<float>(light.pos.posz)
+                            static_cast<float>(pointLight.posx),
+                            static_cast<float>(pointLight.posy),
+                            static_cast<float>(pointLight.posz)
                         };
 
-                        rspLight.kc = light.pos.kc;
-                        rspLight.kl = light.pos.kl;
-                        rspLight.kq = light.pos.kq;
+                        rspLight.kc = pointLight.kc;
+                        rspLight.kl = pointLight.kl;
+                        rspLight.kq = pointLight.kq;
                     }
                     else {
                         rspLight.posDir = {
@@ -612,6 +625,7 @@ namespace RT64 {
 
                 state->updateDrawStatusAttribute(DrawAttribute::Lights);
                 lightsChanged = false;
+                nativePointLightingActive = usesPointLighting;
             }
 
             curLightIndex = vertexLightIndex;
@@ -726,7 +740,11 @@ namespace RT64 {
         else {
             const int32_t TextureSc = (int32_t)(textureState.sc);
             const int32_t TextureTc = (int32_t)(textureState.tc);
-            const double Divisor = 65536.0f * 32.0f;
+            // Ship uses uncorrected affine UVs. Compensate in floating point so
+            // the entire signed 16-bit input range survives the shader correction.
+            const double uvScale = nativeTextureCoordinates &&
+                state->rdp->otherMode.textPersp() == G_TP_NONE ? 2.0 : 1.0;
+            const double Divisor = 65536.0f * 32.0f / uvScale;
             for (uint32_t i = dstIndex; i < dstMax; i++) {
                 tcFloats.emplace_back((float)((double)((vertices[i].s) * TextureSc) / Divisor));
                 tcFloats.emplace_back((float)((double)((vertices[i].t) * TextureTc) / Divisor));
@@ -800,8 +818,10 @@ namespace RT64 {
             break;
         }
         case G_MWO_POINT_ST: {
-            const float s = int16_t((value >> 16) & 0xFFFF) / 32.0f;
-            const float t = int16_t(value & 0xFFFF) / 32.0f;
+            const float uvScale = nativeTextureCoordinates &&
+                state->rdp->otherMode.textPersp() == G_TP_NONE ? 2.0f : 1.0f;
+            const float s = int16_t((value >> 16) & 0xFFFF) * uvScale / 32.0f;
+            const float t = int16_t(value & 0xFFFF) * uvScale / 32.0f;
             tcFloats[globalIndex * 2 + 0] = s;
             tcFloats[globalIndex * 2 + 1] = t;
             lookAtIndices[globalIndex] = 0;
@@ -933,6 +953,19 @@ namespace RT64 {
         const uint32_t rdramAddress = fromSegmentedMasked(address);
         const uint8_t *data = reinterpret_cast<const uint8_t *>(state->fromRDRAM(rdramAddress));
         memcpy(&lights[index], data, sizeof(Light));
+        if (nativeLightLayout) {
+            nativePointLights[index] = lights[index].pos;
+            const auto decodeNativePosition = [data](size_t lowByte, size_t highByte) {
+                return static_cast<int16_t>((uint16_t(data[highByte]) << 8) | data[lowByte]);
+            };
+            // Native light records are word-reversed into RT64's light layout.
+            // Reassemble their little-endian position halfwords without relying
+            // on the directional light's uninitialized pad bytes.
+            nativePointLights[index].posx = decodeNativePosition(11, 10);
+            nativePointLights[index].posy = decodeNativePosition(9, 8);
+            nativePointLights[index].posz = decodeNativePosition(15, 14);
+            nativePointLights[index].kq = data[13];
+        }
         lightsChanged = true;
     }
 
@@ -1091,7 +1124,8 @@ namespace RT64 {
         const bool computeSmoothNormals = !usesLighting;
 
         // Swap the indices around if and only if front face culling is enabled.
-        if ((geometryMode & cullBothMask) == cullFrontMask) {
+        if (((geometryMode & cullBothMask) == cullFrontMask) !=
+            (nativeInvertCulling && (geometryMode & cullBothMask) != 0)) {
             uint8_t swap = c;
             c = a;
             a = swap;
@@ -1122,7 +1156,10 @@ namespace RT64 {
         for (int i = 0; i < 3; i++) {
             // TODO: Figure out how to handle texcoord tracking on TEXGEN cases.
             const uint32_t globalIndex = globalIndices[i];
-            state->rdp->updateCallTexcoords(tcFloats[globalIndex * 2 + 0], tcFloats[globalIndex * 2 + 1]);
+            const float nativeUvBoundsScale = nativeTextureCoordinates &&
+                state->rdp->otherMode.textPersp() == G_TP_NONE ? 0.5f : 1.0f;
+            state->rdp->updateCallTexcoords(tcFloats[globalIndex * 2 + 0] * nativeUvBoundsScale,
+                                           tcFloats[globalIndex * 2 + 1] * nativeUvBoundsScale);
             faceIndices.push_back(globalIndices[i]);
             minMatrix = std::min(minMatrix, worldIndices[globalIndex]);
             maxMatrix = std::max(maxMatrix, worldIndices[globalIndex]);

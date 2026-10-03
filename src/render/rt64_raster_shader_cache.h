@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -20,7 +21,7 @@ namespace RT64 {
         struct CompilationThread {
             RasterShaderCache *shaderCache;
             std::unique_ptr<std::thread> thread;
-            std::atomic<bool> threadRunning;
+            std::atomic<bool> threadRunning{ true };
 
             CompilationThread(RasterShaderCache *shaderCache);
             ~CompilationThread();
@@ -33,7 +34,7 @@ namespace RT64 {
         std::mutex submissionMutex;
         std::queue<ShaderDescription> descQueue;
         std::mutex descQueueMutex;
-        int32_t descQueueActiveCount = 0;
+        uint32_t activeCompileCount = 0;
         std::condition_variable descQueueChanged;
         std::unordered_map<uint64_t, bool> shaderHashes;
         std::unordered_map<uint64_t, std::unique_ptr<RasterShader>> GPUShaders;

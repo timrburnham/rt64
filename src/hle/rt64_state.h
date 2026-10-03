@@ -83,6 +83,8 @@ namespace RT64 {
         uint64_t workloadCounter;
         std::vector<uint64_t> evictedTextureHashes;
         std::unique_ptr<RenderTarget> dummyDepthTarget;
+        bool nativeGrayscaleEnabled = false;
+        hlslpp::float4 nativeGrayscaleColor = { 1.0f, 1.0f, 1.0f, 1.0f };
         DrawCall drawCall;
         DrawStatus drawStatus;
         SpriteCommand activeSpriteCommand;

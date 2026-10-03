@@ -161,6 +161,9 @@ namespace RT64 {
         std::array<uint32_t, RSP_MAX_VERTICES> indices;
         std::bitset<RSP_MAX_VERTICES> used;
         std::array<Light, RSP_MAX_LIGHTS + 1> lights;
+        std::array<PosLight, RSP_MAX_LIGHTS + 1> nativePointLights;
+        bool nativeLightLayout = false;
+        bool nativePointLightingActive = false;
         int lightCount;
         uint32_t vertexFogIndex;
         uint32_t vertexLightIndex;
@@ -179,6 +182,8 @@ namespace RT64 {
         uint32_t objRenderMode;
         interop::RSPFog fog;
         bool NoN;
+        bool nativeInvertCulling = false;
+        bool nativeTextureCoordinates = false;
         uint32_t cullBothMask;
         uint32_t cullFrontMask;
         uint32_t projMask;

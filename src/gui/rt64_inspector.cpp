@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <stdexcept>
 
 #include "im3d/im3d.h"
 #include "im3d/im3d_math.h"
@@ -107,17 +108,23 @@ namespace RT64 {
         case UserConfiguration::GraphicsAPI::Vulkan: {
             VulkanDevice *interfaceDevice = static_cast<VulkanDevice *>(device);
             const VulkanSwapChain *interfaceSwapChain = static_cast<const VulkanSwapChain *>(swapChain);
-            ImGui_ImplVulkan_LoadFunctions([](const char *functionName, void *vulkanInstance) {
+            ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_0, [](const char *functionName, void *vulkanInstance) {
                 return vkGetInstanceProcAddr(*(reinterpret_cast<VkInstance *>(vulkanInstance)), functionName);
             }, &interfaceDevice->renderInterface->instance);
 
-            std::unordered_map<VkDescriptorType, uint32_t> typeCounts;
-            typeCounts[VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER] = 1;
-            
             vulkanContext = std::make_unique<VulkanContext>();
             vulkanContext->device = interfaceDevice->vk;
             vulkanContext->renderPass = VulkanGraphicsPipeline::createRenderPass(interfaceDevice, &interfaceSwapChain->pickedSurfaceFormat.format, 1, VK_FORMAT_UNDEFINED, VK_SAMPLE_COUNT_1_BIT);
-            vulkanContext->descriptorPool = VulkanDescriptorSet::createDescriptorPool(interfaceDevice, typeCounts, false);
+            // ImGui allocates one descriptor set per font/GUI texture. Plume's
+            // normal pool is designed for one set, even with many descriptors.
+            VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096};
+            VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+            poolInfo.maxSets = 4096;
+            poolInfo.poolSizeCount = 1;
+            poolInfo.pPoolSizes = &poolSize;
+            VkResult poolResult = vkCreateDescriptorPool(interfaceDevice->vk, &poolInfo, nullptr, &vulkanContext->descriptorPool);
+            if (poolResult != VK_SUCCESS) throw std::runtime_error("Unable to allocate RT64 GUI descriptor pool");
 
             ImGui_ImplVulkan_InitInfo initInfo = {};
             initInfo.Instance = interfaceDevice->renderInterface->instance;

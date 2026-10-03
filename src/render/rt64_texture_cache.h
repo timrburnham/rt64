@@ -5,6 +5,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
@@ -44,6 +45,9 @@ namespace RT64 {
         LoadTile loadTile;
         std::vector<uint8_t> bytesTMEM;
         bool decodeTMEM;
+        bool nativeRGBA = false;
+        uint32_t nativeWidth = 0;
+        uint32_t nativeHeight = 0;
     };
 
     struct LowMipCacheTexture {
@@ -203,6 +207,7 @@ namespace RT64 {
         std::vector<ReplacementResolvedPath> resolvedPathQueue;
         std::vector<StreamResult> streamResultQueue;
         std::vector<std::unique_ptr<RenderBuffer>> tmemUploadResources;
+        std::vector<std::unique_ptr<RenderBuffer>> rgbaUploadResources;
         std::vector<std::unique_ptr<RenderBuffer>> replacementUploadResources;
         std::vector<std::unique_ptr<TextureDecodeDescriptorSet>> descriptorSets;
         std::mutex uploadQueueMutex;
@@ -234,6 +239,7 @@ namespace RT64 {
         ~TextureCache();
         void uploadThreadLoop();
         void queueGPUUploadTMEM(uint64_t hash, uint64_t creationFrame, const uint8_t *bytes, int bytesCount, int width, int height, uint32_t tlut, const LoadTile &loadTile, bool decodeTMEM);
+        void queueGPUUploadRGBA32(uint64_t hash, uint64_t creationFrame, const uint8_t *bytes, size_t byteCount, uint32_t width, uint32_t height, uint32_t nativeWidth, uint32_t nativeHeight);
         void waitForGPUUploads();
         void addResolvedPaths(uint64_t hash, uint32_t width, uint32_t height, uint32_t tlut, const LoadTile &loadTile, const std::vector<uint8_t> &bytesTMEM, bool decodeTMEM, std::vector<ReplacementResolvedPath> &resolvedPaths, uint64_t exclusiveDbHash = 0);
         bool useTexture(uint64_t hash, uint64_t submissionFrame, uint32_t &textureIndex, interop::float2 &textureScale, interop::float3 &textureDimensions, bool &textureReplaced, bool &hasMipmaps, bool &shiftedByHalf);
