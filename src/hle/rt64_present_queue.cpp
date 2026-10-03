@@ -9,6 +9,8 @@
 
 #include "rt64_workload_queue.h"
 
+#include <cstdint>
+
 namespace RT64 {
     // PresentQueue
 
@@ -103,6 +105,10 @@ namespace RT64 {
         UserConfiguration::Filtering filtering;
         uint32_t viOriginalRate;
         uint32_t targetRate;
+        int32_t nativeViewportX;
+        int32_t nativeViewportY;
+        int32_t nativeViewportWidth;
+        int32_t nativeViewportHeight;
         {
             std::scoped_lock<std::mutex> configurationLock(ext.sharedResources->configurationMutex);
             resolutionScale = ext.sharedResources->resolutionScale;
@@ -112,6 +118,10 @@ namespace RT64 {
             filtering = ext.sharedResources->userConfig.filtering;
             viOriginalRate = ext.sharedResources->viOriginalRate;
             targetRate = ext.sharedResources->targetRate;
+            nativeViewportX = ext.sharedResources->enhancementConfig.presentation.nativeViewportX;
+            nativeViewportY = ext.sharedResources->enhancementConfig.presentation.nativeViewportY;
+            nativeViewportWidth = ext.sharedResources->enhancementConfig.presentation.nativeViewportWidth;
+            nativeViewportHeight = ext.sharedResources->enhancementConfig.presentation.nativeViewportHeight;
         }
 
         RenderTarget *colorTarget = nullptr;
@@ -324,6 +334,10 @@ namespace RT64 {
                     renderParams.filtering = filtering;
                     renderParams.vi = &present.screenVI;
                     renderParams.removeBlackBorders = removeBlackBorders;
+                    renderParams.nativeViewportX = nativeViewportX;
+                    renderParams.nativeViewportY = nativeViewportY;
+                    renderParams.nativeViewportWidth = nativeViewportWidth;
+                    renderParams.nativeViewportHeight = nativeViewportHeight;
 
                     const bool useDownsampling = (colorTarget->downsampleMultiplier > 1);
                     if (useDownsampling) {

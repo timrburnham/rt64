@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "common/rt64_user_configuration.h"
 #include "hle/rt64_vi.h"
 
@@ -29,6 +31,10 @@ namespace RT64 {
             UserConfiguration::Filtering filtering = UserConfiguration::Filtering::Linear;
             const VI *vi = nullptr;
             bool removeBlackBorders = false;
+            int32_t nativeViewportX = 0;
+            int32_t nativeViewportY = 0;
+            int32_t nativeViewportWidth = 0;
+            int32_t nativeViewportHeight = 0;
         };
 
         VIRenderer();

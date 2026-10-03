@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "rt64_common.h"
 
 namespace RT64 {
@@ -21,6 +23,13 @@ namespace RT64 {
 
             Mode mode;
             bool removeBlackBorders;
+            // Optional native-pixel viewport for callers that compose the VI
+            // image into a specific UI rectangle. All-zero dimensions keep
+            // the regular VI-derived viewport and scissor.
+            int32_t nativeViewportX;
+            int32_t nativeViewportY;
+            int32_t nativeViewportWidth;
+            int32_t nativeViewportHeight;
         };
         
         struct Rect {

@@ -52,7 +52,24 @@ namespace RT64 {
         v[2][2] = -vp[2][3];
         v[3][2] = -vp[3][3];
 
-        p[2][2] = vp[0][2] / v[0][2];
+        // The perspective depth term is shared across the view-space Z axis,
+        // but the first component of that axis can be zero (for example when
+        // the camera has no yaw). Derive the ratio from its largest component
+        // so a valid view matrix does not produce 0/0 during decomposition.
+        uint32_t depthAxisComponent = 0;
+        for (uint32_t i = 1; i < 3; i++) {
+            if (std::fabs(v[i][2]) > std::fabs(v[depthAxisComponent][2])) {
+                depthAxisComponent = i;
+            }
+        }
+
+        if (std::fabs(v[depthAxisComponent][2]) < 1e-6f) {
+            v = hlslpp::float4x4::identity();
+            p = vp;
+            return;
+        }
+
+        p[2][2] = vp[depthAxisComponent][2] / v[depthAxisComponent][2];
         p[3][2] = vp[3][2] - p[2][2] * v[3][2];
 
         p[0][0] = sqrtf(sqr(vp[0][0]) + sqr(vp[1][0]) + sqr(vp[2][0]));

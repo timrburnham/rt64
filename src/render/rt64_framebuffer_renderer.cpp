@@ -599,8 +599,17 @@ namespace RT64 {
             case InstanceDrawCall::Type::FillRect: {
                 const auto &clearRect = drawCall.clearRect;
                 RenderTarget *chosenTarget = (fbStorage->colorTarget != nullptr) ? fbStorage->colorTarget : fbStorage->depthTarget;
-                bool rectCoversWholeTarget = (clearRect.rect.left == 0) && (clearRect.rect.top == 0) && (uint32_t(clearRect.rect.right) == chosenTarget->width) && (uint32_t(clearRect.rect.bottom) == chosenTarget->height);
-                const RenderRect *clearRects = rectCoversWholeTarget ? nullptr : &clearRect.rect;
+                // Native wide clears may extend past the render target. Vulkan
+                // clear attachments require every clear rectangle to be inside
+                // the framebuffer, unlike rasterized rectangles with scissors.
+                const RenderRect boundedRect(
+                    std::clamp(clearRect.rect.left, 0, int32_t(chosenTarget->width)),
+                    std::clamp(clearRect.rect.top, 0, int32_t(chosenTarget->height)),
+                    std::clamp(clearRect.rect.right, 0, int32_t(chosenTarget->width)),
+                    std::clamp(clearRect.rect.bottom, 0, int32_t(chosenTarget->height)));
+                if (boundedRect.right <= boundedRect.left || boundedRect.bottom <= boundedRect.top) break;
+                bool rectCoversWholeTarget = (boundedRect.left == 0) && (boundedRect.top == 0) && (uint32_t(boundedRect.right) == chosenTarget->width) && (uint32_t(boundedRect.bottom) == chosenTarget->height);
+                const RenderRect *clearRects = rectCoversWholeTarget ? nullptr : &boundedRect;
                 uint32_t clearRectCount = rectCoversWholeTarget ? 0 : 1;
                 if (fbStorage->colorTarget != nullptr) {
                     worker->commandList->clearColor(0, clearRect.color, clearRects, clearRectCount);
@@ -1676,7 +1685,8 @@ namespace RT64 {
                             break;
                         }
 
-                        triangles.scissor = convertFixedRect(call.callDesc.scissorRect, p.resolutionScale, p.fbWidth, invRatioScale, extOriginPercentage, int32_t(horizontalMisalignment), call.callDesc.scissorLeftOrigin, call.callDesc.scissorRightOrigin);
+                        const float scissorRatioScale = (proj.type == Projection::Type::Rectangle && call.callDesc.nativeRectScissor) ? 1.0f : invRatioScale;
+                        triangles.scissor = convertFixedRect(call.callDesc.scissorRect, p.resolutionScale, p.fbWidth, scissorRatioScale, extOriginPercentage, int32_t(horizontalMisalignment), call.callDesc.scissorLeftOrigin, call.callDesc.scissorRightOrigin);
 
                         bool usesViewport = (proj.type == Projection::Type::Perspective) || (proj.type == Projection::Type::Orthographic);
                         if (usesViewport) {

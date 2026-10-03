@@ -1255,6 +1255,9 @@ namespace RT64 {
         drawCall.rectLeftOrigin = extAlignment.leftOrigin;
         drawCall.rectRightOrigin = extAlignment.rightOrigin;
         drawCall.rectAspect = extended.global.rectAspect;
+        // Ship scales the scissor to the entire output even when the HUD
+        // rectangle itself keeps its original pixel size in widescreen.
+        drawCall.nativeRectScissor = state->rsp->nativeTextureCoordinates;
 
         if (flushedState) {
             state->loadDrawState();

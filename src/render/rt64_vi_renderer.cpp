@@ -7,6 +7,9 @@
 #include "shared/rt64_hlsl.h"
 #include "shared/rt64_video_interface.h"
 
+#include <algorithm>
+#include <cstdint>
+
 namespace RT64 {
     // VIRenderer
 
@@ -69,7 +72,28 @@ namespace RT64 {
 
         RenderViewport viewport;
         RenderRect scissor;
-        getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, p.removeBlackBorders, viewport, scissor);
+        if ((p.nativeViewportWidth > 0) && (p.nativeViewportHeight > 0)) {
+            // The requested viewport can extend beyond the swapchain to
+            // preserve overscan, but rasterization must be clipped to its
+            // actual bounds.
+            viewport = RenderViewport(float(p.nativeViewportX), float(p.nativeViewportY),
+                float(p.nativeViewportWidth), float(p.nativeViewportHeight));
+
+            const int64_t left = p.nativeViewportX;
+            const int64_t top = p.nativeViewportY;
+            const int64_t right = left + int64_t(p.nativeViewportWidth);
+            const int64_t bottom = top + int64_t(p.nativeViewportHeight);
+            const int64_t swapWidth = p.swapChain->getWidth();
+            const int64_t swapHeight = p.swapChain->getHeight();
+            scissor = RenderRect(
+                int32_t(std::clamp<int64_t>(left, 0, swapWidth)),
+                int32_t(std::clamp<int64_t>(top, 0, swapHeight)),
+                int32_t(std::clamp<int64_t>(right, 0, swapWidth)),
+                int32_t(std::clamp<int64_t>(bottom, 0, swapHeight)));
+        }
+        else {
+            getViewportAndScissor(p.swapChain, *p.vi, p.resolutionScale, p.downsamplingScale, p.removeBlackBorders, viewport, scissor);
+        }
         p.commandList->setViewports(viewport);
         p.commandList->setScissors(scissor);
 
